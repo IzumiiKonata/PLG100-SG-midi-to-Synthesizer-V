@@ -176,7 +176,7 @@ public class LyricsExtractor {
     @SneakyThrows
     private void parseMidi() {
 
-        Sequence sequence = MidiSystem.getSequence(new File("D:\\MidiTest\\tokinona.MID"));
+        Sequence sequence = MidiSystem.getSequence(new File("D:\\MidiTest\\haruyoko.MID"));
 
         Track[] tracks = sequence.getTracks();
 
@@ -240,6 +240,8 @@ public class LyricsExtractor {
                     if (parsed != null) {
                         System.out.println(parsed.input_text);
                         curLyrics = parsed;
+                    } else {
+                        System.out.println("[Err] Find failed");
                     }
 
                 }
