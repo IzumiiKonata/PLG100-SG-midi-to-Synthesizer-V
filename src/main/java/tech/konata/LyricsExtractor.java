@@ -1,0 +1,298 @@
+package tech.konata;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import lombok.SneakyThrows;
+
+import javax.sound.midi.*;
+import java.io.*;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * @author IzumiiKonata
+ * Date: 2025/4/10 22:50
+ */
+public class LyricsExtractor {
+
+    @SneakyThrows
+    public static void main(String[] args) {
+        new LyricsExtractor().run();
+
+    }
+
+    public LyricsExtractor() {
+
+    }
+
+    public void run() {
+        this.parseCSVTable();
+        this.loadSVProjectTemplate();
+        this.parseMidi();
+        this.saveSVProj();
+    }
+
+    List<SGData> table = new ArrayList<>();
+
+    @SneakyThrows
+    private void parseCSVTable() {
+
+        InputStream is = LyricsExtractor.class.getResourceAsStream("/SG_TABLE.csv");
+
+        String[] strings = new String(is.readAllBytes()).split("\n");
+
+        // skip first line
+        for (int i = 1; i < strings.length; i++) {
+
+            String line = strings[i];
+
+            String[] split = line.split(",");
+
+            for (int j = 7; j < split.length; j++) {
+
+                if (split[j].length() == 1) {
+                    split[j] = "0" + split[j];
+                }
+
+            }
+
+            table.add(new SGData(split[0], split[1], split[2], split[3], split[4], split[5], split[6], split[7], split[8], split[9], split[10], split[11], split[12], split[13], split[14], split[15], split[16], split[17], split[18], split[19]));
+        }
+
+    }
+
+    private final long TICK_RATE = 1470000L;
+
+    private JsonObject proj;
+
+    Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+    private void loadSVProjectTemplate() {
+
+        InputStream is = LyricsExtractor.class.getResourceAsStream("/SynthesizerV_Project_Template.json");
+
+        proj = gson.fromJson(new InputStreamReader(is), JsonObject.class);
+
+    }
+
+    private void insertTempo(long tick, double bpm) {
+        JsonObject time = proj.getAsJsonObject("time");
+
+        JsonArray tempo = time.getAsJsonArray("tempo");
+
+        JsonObject obj = new JsonObject();
+        obj.addProperty("position", tick * TICK_RATE);
+        obj.addProperty("bpm", bpm);
+
+        tempo.add(obj);
+
+        time.add("tempo", tempo);
+        proj.add("time", time);
+    }
+
+    private void insertNote(String note, long tickStart, long tickEnd, int pitch) {
+
+        JsonArray tracks = proj.getAsJsonArray("tracks");
+
+        JsonObject jObj = tracks.get(0).getAsJsonObject();
+
+        JsonObject mainGroup = jObj.getAsJsonObject("mainGroup");
+        JsonArray notes = mainGroup.getAsJsonArray("notes");
+
+        JsonObject n = new JsonObject();
+
+        n.addProperty("musicalType", "singing");
+        n.addProperty("onset", tickStart * TICK_RATE);
+        n.addProperty("duration", (tickEnd - tickStart) * TICK_RATE);
+        n.addProperty("lyrics", note);
+        n.addProperty("phonemes", "");
+        n.addProperty("accent", "");
+        n.addProperty("pitch", pitch);
+        n.addProperty("detune", 0);
+        n.addProperty("instantMode", true);
+
+        JsonObject attributes = new JsonObject();
+        n.add("attributes", attributes);
+
+        JsonObject systemAttributes = new JsonObject();
+        systemAttributes.addProperty("tF0Offset", -0.0);
+        systemAttributes.addProperty("tF0Left", 0.05000000074505806);
+        systemAttributes.addProperty("tF0Right", 0.05000000074505806);
+        systemAttributes.addProperty("dF0Left", 0.0);
+        systemAttributes.addProperty("dF0Right", 0.0);
+        systemAttributes.addProperty("dF0Vbr", 0.0);
+        n.add("systemAttributes", systemAttributes);
+
+        JsonObject pitchTakes = new JsonObject();
+        pitchTakes.addProperty("activeTakeId", 0);
+
+        JsonArray takes = new JsonArray();
+
+        JsonObject obj = new JsonObject();
+
+        obj.addProperty("id", 0);
+        obj.addProperty("expr", 1.0);
+        obj.addProperty("liked", false);
+
+        takes.add(obj);
+        pitchTakes.add("takes", takes);
+
+        n.add("pitchTakes", pitchTakes);
+
+        JsonObject timbreTakes = new JsonObject();
+        timbreTakes.addProperty("activeTakeId", 0);
+        timbreTakes.addProperty("expr", 1.0);
+
+        timbreTakes.add("takes", takes);
+
+        n.add("timbreTakes", timbreTakes);
+
+        notes.add(n);
+
+        mainGroup.add("notes", notes);
+        jObj.add("mainGroup", mainGroup);
+
+        tracks = new JsonArray();
+        tracks.add(jObj);
+
+        proj.add("tracks", tracks);
+
+    }
+
+    @SneakyThrows
+    private void saveSVProj() {
+
+        FileWriter writer = new FileWriter("D:\\SynthesizerV Projects\\Output.svp");
+        gson.toJson(proj, writer);
+
+        writer.flush();
+        writer.close();
+    }
+
+    @SneakyThrows
+    private void parseMidi() {
+
+        Sequence sequence = MidiSystem.getSequence(new File("D:\\MidiTest\\tokinona.MID"));
+
+        Track[] tracks = sequence.getTracks();
+
+        double msPerTick = 0;
+        long noteStartTick = 0;
+
+        for (int i = 0; i < tracks.length; i++) {
+            Track track = tracks[i];
+
+            for (int j = 0; j < track.size(); j++) {
+                MidiEvent midiEvent = track.get(j);
+                MidiMessage message = midiEvent.getMessage();
+
+                if (message instanceof MetaMessage) {
+                    MetaMessage mm = (MetaMessage) message;
+                    if(mm.getType() == 0x51 /*set tempo*/){
+                        byte[] data = mm.getData();
+                        int tempo = (data[0] & 0xff) << 16 | (data[1] & 0xff) << 8 | (data[2] & 0xff);
+                        double bpm = (double) (60000000 / tempo) + 1;
+                        insertTempo(midiEvent.getTick(), bpm);
+                        msPerTick = (60000 / (bpm * sequence.getResolution()));
+                    }
+                }
+
+                double curMillis = midiEvent.getTick() * msPerTick;
+
+                if (message instanceof ShortMessage) {
+                    ShortMessage sm = (ShortMessage) message;
+
+                    if (sm.getChannel() == 0) {
+                        if (sm.getCommand() == ShortMessage.NOTE_ON) {
+                            int note = sm.getData1();
+                            int velocity = sm.getData2();
+
+                            if (velocity == 0) {
+                                System.out.println("[" + curMillis + "] NOTE_OFF: Note: " + sm.getData1() + " Velocity: " + sm.getData2());
+
+                                insertNote(curLyrics.lyrics_representation, noteStartTick, midiEvent.getTick(), note);
+                            } else {
+                                System.out.println("[" + curMillis + "] NOTE_ON: Note: " + sm.getData1() + " Velocity: " + sm.getData2());
+
+                                noteStartTick = midiEvent.getTick();
+                            }
+
+                        }
+                    }
+
+                }
+
+                if (message instanceof SysexMessage) {
+                    SysexMessage sysexMessage = (SysexMessage) message;
+
+                    StringBuilder sb = new StringBuilder();
+                    for (byte b : sysexMessage.getMessage()) {
+                        sb.append(String.format("%02X ", b));
+                    }
+                    System.out.println(sb);
+
+                    SGData parsed = parse(sb.toString());
+
+                    if (parsed != null) {
+                        System.out.println(parsed.input_text);
+                        curLyrics = parsed;
+                    }
+
+                }
+
+            }
+
+        }
+    }
+
+    SGData curLyrics = null;
+
+    private SGData parse(String hexArr) {
+
+        // header is always F0 43 1# 5D 03 0* 00
+
+        if (!hexArr.startsWith("F0 43 1")) {
+            return null;
+        }
+
+        if (!hexArr.startsWith(" 5D 03 0", 8)) {
+            return null;
+        }
+
+        if (!hexArr.startsWith(" 00", 17)) {
+            return null;
+        }
+
+        if (!hexArr.endsWith(" F7 ")) {
+            return null;
+        }
+
+        String cont = hexArr.substring(21, hexArr.length() - 4);
+//        System.out.println("Content: " + cont);
+
+        String[] split = cont.split(" ");
+
+        for (int length = split.length; length > 0; length--) {
+
+            for (SGData sgData : table) {
+
+                if (sgData.availFieldCount == length) {
+
+                    if (sgData.ph1.equals(split[0])) {
+                        return sgData;
+                    }
+
+                }
+
+            }
+
+        }
+
+        return null;
+    }
+
+}
