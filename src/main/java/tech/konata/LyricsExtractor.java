@@ -37,8 +37,8 @@ public class LyricsExtractor {
 
         convertors.forEach(ProjectConvertor::load);
 
-        // haruyoko
-        File file = new File("D:\\MidiTest\\tokinona.MID");
+        // haruyoko, tokinona
+        File file = new File("D:\\MidiTest\\haruyoko.MID");
         this.parseMidi(file);
 
         convertors.forEach(c -> {
@@ -98,7 +98,7 @@ public class LyricsExtractor {
                     if(mm.getType() == 0x51 /*set tempo*/){
                         byte[] data = mm.getData();
                         int tempo = (data[0] & 0xff) << 16 | (data[1] & 0xff) << 8 | (data[2] & 0xff);
-                        double bpm = (double) (60000000 / tempo) + 1;
+                        double bpm = (double) (60000000 / tempo);
 
                         convertors.forEach(c -> {
                             c.insertTempo(midiEvent.getTick(), bpm);
