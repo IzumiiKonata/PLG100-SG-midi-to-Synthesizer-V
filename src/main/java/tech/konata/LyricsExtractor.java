@@ -1,5 +1,6 @@
 package tech.konata;
 
+import lombok.AllArgsConstructor;
 import lombok.SneakyThrows;
 import tech.konata.convert.ProjectConvertor;
 import tech.konata.convert.impl.SVP;
@@ -38,7 +39,7 @@ public class LyricsExtractor {
         convertors.forEach(ProjectConvertor::load);
 
         // haruyoko, tokinona
-        File file = new File("D:\\MidiTest\\tokinona.MID");
+        File file = new File("D:\\MidiTest\\haruyoko.MID");
         this.parseMidi(file);
 
         convertors.forEach(c -> {
@@ -76,6 +77,13 @@ public class LyricsExtractor {
 
     }
 
+    @AllArgsConstructor
+    private static class NoteRecord {
+
+        public long startTick;
+        public SGData lyrics;
+    }
+
     @SneakyThrows
     private void parseMidi(File midiIn) {
 
@@ -84,7 +92,8 @@ public class LyricsExtractor {
         Track[] tracks = sequence.getTracks();
 
         double msPerTick = 0;
-        long noteStartTick = 0;
+
+        NoteRecord[] noteRecord = new NoteRecord[128];
 
         for (int i = 0; i < tracks.length; i++) {
             Track track = tracks[i];
@@ -121,14 +130,14 @@ public class LyricsExtractor {
                             if (velocity == 0) {
                                 System.out.println("[" + curMillis + "] NOTE_OFF: Note: " + sm.getData1() + " Velocity: " + sm.getData2());
 
-                                long finalNoteStartTick = noteStartTick;
                                 convertors.forEach(c -> {
-                                    c.insertNote(curLyrics.lyrics_representation, finalNoteStartTick, midiEvent.getTick(), note);
+                                    NoteRecord nr = noteRecord[note];
+                                    c.insertNote(nr.lyrics.lyrics_representation, nr.startTick, midiEvent.getTick(), note);
                                 });
                             } else {
                                 System.out.println("[" + curMillis + "] NOTE_ON: Note: " + sm.getData1() + " Velocity: " + sm.getData2());
 
-                                noteStartTick = midiEvent.getTick();
+                                noteRecord[sm.getData1()] = new NoteRecord(midiEvent.getTick(), curLyrics);
                             }
 
                         }
