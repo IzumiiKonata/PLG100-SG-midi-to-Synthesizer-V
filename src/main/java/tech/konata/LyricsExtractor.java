@@ -193,24 +193,33 @@ public class LyricsExtractor {
         }
 
         String cont = hexArr.substring(21, hexArr.length() - 4);
-//        System.out.println("Content: " + cont);
+        System.out.println("Content: " + cont);
 
         String[] split = cont.split(" ");
 
         for (int length = split.length; length > 0; length--) {
-
+            mainLoop:
             for (SGData sgData : table) {
 
                 if (sgData.availFieldCount == length) {
 
-                    if (sgData.ph1.equals(split[0])) {
-                        return sgData;
+                    for (int i = 0; i < length; i++) {
+
+                        String field = sgData.getField(i + 9);
+
+                        if (field.equals("**"))
+                            continue;
+
+                        if (!field.equals(split[i]))
+                            continue mainLoop;
+
                     }
+
+                    return sgData;
 
                 }
 
             }
-
         }
 
         return null;

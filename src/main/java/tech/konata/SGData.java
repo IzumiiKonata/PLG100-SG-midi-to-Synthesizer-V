@@ -23,15 +23,15 @@ public class SGData {
         phoneme_representation5 = phonemeRepresentation5;
         SysEX_header = sysEXHeader;
         this.ph1 = ph1;
-        this.time1 = time1;
+        this.time1 = "**";
         this.ph2 = ph2;
-        this.time2 = time2;
+        this.time2 = "**";
         this.ph3 = ph3;
-        this.time3 = time3;
+        this.time3 = "**";
         this.ph4 = ph4;
-        this.time4 = time4;
+        this.time4 = "**";
         this.ph5 = ph5;
-        this.time5 = time5;
+        this.time5 = "**";
         this.eox = eox;
 
         if (!ph1.isEmpty())
@@ -63,5 +63,34 @@ public class SGData {
 
         if (!time5.isEmpty())
             availFieldCount++;
+
+    }
+
+    public String getField(int index) {
+
+        return switch (index) {
+            case 0 -> syllable_type;
+            case 1 -> lyrics_representation;
+            case 2 -> input_text;
+            case 3 -> phoneme_representation1;
+            case 4 -> phoneme_representation2;
+            case 5 -> phoneme_representation3;
+            case 6 -> phoneme_representation4;
+            case 7 -> phoneme_representation5;
+            case 8 -> SysEX_header;
+            case 9 -> ph1;
+            case 10 -> time1;
+            case 11 -> ph2;
+            case 12 -> time2;
+            case 13 -> ph3;
+            case 14 -> time3;
+            case 15 -> ph4;
+            case 16 -> time4;
+            case 17 -> ph5;
+            case 18 -> time5;
+            case 19 -> eox;
+            default -> throw new RuntimeException("?");
+        };
+
     }
 }
