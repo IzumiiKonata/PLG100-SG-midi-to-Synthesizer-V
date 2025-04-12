@@ -38,7 +38,7 @@ public class LyricsExtractor {
         convertors.forEach(ProjectConvertor::load);
 
         // haruyoko, tokinona
-        File file = new File("D:\\MidiTest\\haruyoko.MID");
+        File file = new File("D:\\MidiTest\\tokinona.MID");
         this.parseMidi(file);
 
         convertors.forEach(c -> {
