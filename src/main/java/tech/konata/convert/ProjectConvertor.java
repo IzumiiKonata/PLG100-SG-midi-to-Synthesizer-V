@@ -14,4 +14,8 @@ public abstract class ProjectConvertor {
 
     public abstract void save(String name);
 
+    public void onPitchBend(int value, long tick) {
+
+    }
+
 }

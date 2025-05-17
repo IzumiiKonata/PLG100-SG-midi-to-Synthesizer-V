@@ -4,13 +4,18 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import lombok.Getter;
 import lombok.SneakyThrows;
 import tech.konata.LyricsExtractor;
-import tech.konata.convert.ProjectConvertor;
+import tech.konata.convert.*;
+import tech.konata.convert.pitch.PitchConverter;
+import tech.konata.convert.pitch.SynthVPitchConvertion;
 
 import java.io.FileWriter;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * @author IzumiiKonata
@@ -47,7 +52,11 @@ public class SVP extends ProjectConvertor {
         proj.add("time", time);
     }
 
+    List<Note> notes = new ArrayList<>();
+
     public void insertNote(String note, long tickStart, long tickEnd, int pitch) {
+
+        notes.add(new Note(pitch, tickStart, tickEnd, note));
 
         JsonArray tracks = proj.getAsJsonArray("tracks");
 
@@ -116,8 +125,78 @@ public class SVP extends ProjectConvertor {
 
     }
 
+    @Getter
+    Pitch pitch;
+    List<Pair<Long, Double>> pitchBendData = new ArrayList<>();
+
+    @Override
+    public void onPitchBend(int value, long tick) {
+        pitchBendData.add(new Pair<>(tick, value / 768.0));
+    }
+
+    private List<Double> generatePitchData() {
+
+        // 处理空安全和链式调用
+        if (this.getPitch() == null) return null;
+
+        List<Pair<Long, Double>> relativeData = PitchConverter.getRelativeData(pitch, notes);
+        if (relativeData == null) return null;
+
+        // 假设 appendPitchPointsForSvpOutput 的具体实现（需补充）
+        List<Pair<Long, Double>> appendedData = SynthVPitchConvertion.appendPitchPointsForSvpOutput(relativeData);
+
+        // 转换数据格式
+        List<Pair<Long, Double>> mappedData = new ArrayList<>();
+        for (Pair<Long, Double> pair : appendedData) {
+            long scaledTick = pair.first * TICK_RATE;
+            double scaledValue = pair.second * 100.0;
+            mappedData.add(new Pair<>(scaledTick, scaledValue));
+        }
+
+        // 平铺成 Double 列表
+        List<Double> points = new ArrayList<>();
+        for (Pair<Long, Double> p : mappedData) {
+            points.add((double) p.first);
+            points.add(p.second);
+        }
+
+        return points;
+    }
+
     @SneakyThrows
     public void save(String name) {
+
+        JsonArray tracks = proj.getAsJsonArray("tracks");
+
+        JsonObject jObj = tracks.get(0).getAsJsonObject();
+
+        JsonObject mainGroup = jObj.getAsJsonObject("mainGroup");
+
+        JsonObject parameters = mainGroup.getAsJsonObject("parameters");
+
+        JsonObject pitchDelta = parameters.getAsJsonObject("pitchDelta");
+
+        JsonArray points = pitchDelta.getAsJsonArray("points");
+
+        this.pitch = new Pitch(this.pitchBendData, false);
+
+        List<Double> doubles = generatePitchData();
+        assert doubles != null;
+        doubles.forEach(points::add);
+
+        pitchDelta.add("points", points);
+
+        parameters.add("pitchDelta", pitchDelta);
+
+        mainGroup.add("parameters", parameters);
+
+        jObj.add("mainGroup", mainGroup);
+
+        tracks = new JsonArray();
+        tracks.add(jObj);
+
+        proj.add("tracks", tracks);
+
         FileWriter writer = new FileWriter(name + ".svp");
         gson.toJson(proj, writer);
 

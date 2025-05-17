@@ -40,7 +40,7 @@
         {
           "pitchDelta":
           {
-            "mode": "cubic",
+            "mode": "cosine",
             "points":
             []
           },

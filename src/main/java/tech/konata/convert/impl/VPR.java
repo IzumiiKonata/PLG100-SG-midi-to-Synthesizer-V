@@ -4,14 +4,17 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import lombok.Getter;
 import lombok.SneakyThrows;
 import tech.konata.LyricsExtractor;
-import tech.konata.convert.ProjectConvertor;
+import tech.konata.convert.*;
+import tech.konata.convert.pitch.VocaloidPitchConverter;
 
 import java.io.*;
 import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 /**
@@ -49,6 +52,8 @@ public class VPR extends ProjectConvertor {
 
             return;
         }
+
+        notes.add(new Note(pitch, tickStart, tickEnd, note));
 
         JsonArray tracks = proj.getAsJsonArray("tracks");
 
@@ -174,9 +179,90 @@ public class VPR extends ProjectConvertor {
 
     }
 
+    @Getter
+    Pitch pitch;
+    List<Pair<Long, Double>> pitchBendData = new ArrayList<>();
+
+    @Override
+    public void onPitchBend(int value, long tick) {
+        pitchBendData.add(new Pair<>(tick, value / 768.0));
+    }
+
+    List<Note> notes = new ArrayList<>();
+
     @Override
     @SneakyThrows
     public void save(String name) {
+
+        this.pitch = new Pitch(this.pitchBendData, false);
+
+        VocaloidPitchConverter.VocaloidPartPitchData pitchRawData = VocaloidPitchConverter.generateForVocaloid(this.pitch, this.notes);
+
+        if (pitchRawData != null) {
+            JsonArray tracks = proj.getAsJsonArray("tracks");
+
+            JsonObject track = tracks.get(0).getAsJsonObject();
+
+            JsonArray parts = track.getAsJsonArray("parts");
+
+            JsonObject part = parts.get(0).getAsJsonObject();
+
+            JsonArray controllers = part.getAsJsonArray("controllers");
+
+            if (!pitchRawData.getPbs().isEmpty()) {
+
+                JsonObject pitchBendSensObj = new JsonObject();
+
+                pitchBendSensObj.addProperty("name", "pitchBendSens");
+
+                JsonArray events = new JsonArray();
+
+                for (VocaloidPitchConverter.VocaloidPartPitchData.Event pbEvent : pitchRawData.getPbs()) {
+                    JsonObject eventObj = new JsonObject();
+
+                    eventObj.addProperty("pos", pbEvent.getPos());
+                    eventObj.addProperty("value", pbEvent.getValue());
+
+                    events.add(eventObj);
+                }
+
+                pitchBendSensObj.add("events", events);
+                controllers.add(pitchBendSensObj);
+            }
+
+            if (!pitchRawData.getPit().isEmpty()) {
+
+                JsonObject pitchBendObj = new JsonObject();
+
+                pitchBendObj.addProperty("name", "pitchBend");
+
+                JsonArray events = new JsonArray();
+
+                for (VocaloidPitchConverter.VocaloidPartPitchData.Event pbEvent : pitchRawData.getPit()) {
+                    JsonObject eventObj = new JsonObject();
+
+                    eventObj.addProperty("pos", pbEvent.getPos());
+                    eventObj.addProperty("value", pbEvent.getValue());
+
+                    events.add(eventObj);
+                }
+
+                pitchBendObj.add("events", events);
+                controllers.add(pitchBendObj);
+            }
+
+            part.add("controllers", controllers);
+
+            parts = new JsonArray();
+            parts.add(part);
+
+            track.add("parts", parts);
+
+            tracks = new JsonArray();
+            tracks.add(track);
+
+            proj.add("tracks", tracks);
+        }
 
         ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(name + ".vpr"));
 

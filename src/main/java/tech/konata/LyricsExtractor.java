@@ -39,7 +39,7 @@ public class LyricsExtractor {
         convertors.forEach(ProjectConvertor::load);
 
         // haruyoko, tokinona
-        File file = new File("D:\\MidiTest\\haruyoko.MID");
+        File file = new File("D:\\MidiTest\\tokinona.MID");
         this.parseMidi(file);
 
         convertors.forEach(c -> {
@@ -141,6 +141,18 @@ public class LyricsExtractor {
                             }
 
                         }
+
+                        if (sm.getCommand() == ShortMessage.PITCH_BEND) {
+                            int lsb = sm.getData1(); // 低字节
+                            int msb = sm.getData2(); // 高字节
+
+                            // 计算弯音轮值
+                            int pitchBendValue = (msb << 7) | lsb;
+                            convertors.forEach(c -> {
+                                c.onPitchBend(pitchBendValue - 8192, midiEvent.getTick());
+                            });
+                        }
+
                     }
 
                 }
