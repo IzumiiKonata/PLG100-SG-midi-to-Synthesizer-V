@@ -76,7 +76,7 @@ private SGData parsePhoneSeqData(String hexArr) {
     if (!hexArr.startsWith("F0 43 1")) return null;
     if (!hexArr.startsWith(" 5D 03 0", 8)) return null;
     if (!hexArr.startsWith(" 00", 17)) return null;
-    if (!hexArr.endsWith(" F7 ")) return null;
+    if (!hexArr.endsWith(" F7")) return null;
     
     // Data extraction
     String cont = hexArr.substring(21, hexArr.length() - 4).trim();
