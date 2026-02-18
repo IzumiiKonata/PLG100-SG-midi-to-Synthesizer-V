@@ -1,18 +1,28 @@
 package tech.konata;
 
-import lombok.AllArgsConstructor;
-
 /**
  * @author IzumiiKonata
  * Date: 2025/4/11 17:45
  */
 public class SGData {
 
-    public final String syllable_type,lyrics_representation,input_text,phoneme_representation1,phoneme_representation2,phoneme_representation3,phoneme_representation4,phoneme_representation5,SysEX_header,ph1,time1,ph2,time2,ph3,time3,ph4,time4,ph5,time5,eox;
+    public final String syllable_type, lyrics_representation, input_text, 
+                     phoneme_representation1, phoneme_representation2, 
+                     phoneme_representation3, phoneme_representation4, 
+                     phoneme_representation5, SysEX_header, 
+                     ph1, time1, ph2, time2, ph3, time3, ph4, time4, ph5, time5, eox;
 
     public int availFieldCount;
+    public boolean hasBreathMark; // Breath information flag
+    public int pronunciationMode; // Pronunciation mode: 1=Normal, 2=Note-off, 3=Fixed time
 
-    public SGData(String syllableType, String lyricsRepresentation, String inputText, String phonemeRepresentation1, String phonemeRepresentation2, String phonemeRepresentation3, String phonemeRepresentation4, String phonemeRepresentation5, String sysEXHeader, String ph1, String time1, String ph2, String time2, String ph3, String time3, String ph4, String time4, String ph5, String time5, String eox) {
+    public SGData(String syllableType, String lyricsRepresentation, String inputText, 
+                  String phonemeRepresentation1, String phonemeRepresentation2, 
+                  String phonemeRepresentation3, String phonemeRepresentation4, 
+                  String phonemeRepresentation5, String sysEXHeader, 
+                  String ph1, String time1, String ph2, String time2, 
+                  String ph3, String time3, String ph4, String time4, 
+                  String ph5, String time5, String eox) {
         syllable_type = syllableType;
         lyrics_representation = lyricsRepresentation;
         input_text = inputText;
@@ -34,40 +44,51 @@ public class SGData {
         this.time5 = "**";
         this.eox = eox;
 
-        if (!ph1.isEmpty())
-            availFieldCount++;
+        availFieldCount = 0;
+        if (!ph1.isEmpty()) availFieldCount++;
+        if (!time1.isEmpty() && !time1.equals("**")) availFieldCount++;
+        if (!ph2.isEmpty()) availFieldCount++;
+        if (!time2.isEmpty() && !time2.equals("**")) availFieldCount++;
+        if (!ph3.isEmpty()) availFieldCount++;
+        if (!time3.isEmpty() && !time3.equals("**")) availFieldCount++;
+        if (!ph4.isEmpty()) availFieldCount++;
+        if (!time4.isEmpty() && !time4.equals("**")) availFieldCount++;
+        if (!ph5.isEmpty()) availFieldCount++;
+        if (!time5.isEmpty() && !time5.equals("**")) availFieldCount++;
 
-        if (!time1.isEmpty())
-            availFieldCount++;
+        // Check for breath information (7E)
+        hasBreathMark = ph5.equals("7E") || ph4.equals("7E") || 
+                       ph3.equals("7E") || ph2.equals("7E") || ph1.equals("7E");
 
-        if (!ph2.isEmpty())
-            availFieldCount++;
+        // Determine pronunciation mode
+        pronunciationMode = determinePronunciationMode();
+    }
 
-        if (!time2.isEmpty())
-            availFieldCount++;
+    private int determinePronunciationMode() {
+        // Check if any phoneme has zero time
+        boolean hasZeroTime = false;
 
-        if (!ph3.isEmpty())
-            availFieldCount++;
+        // Check last valid time field
+        if (!time5.isEmpty() && time5.equals("00")) {
+            hasZeroTime = true;
+        } else if (!time4.isEmpty() && time4.equals("00")) {
+            hasZeroTime = true;
+        } else if (!time3.isEmpty() && time3.equals("00")) {
+            hasZeroTime = true;
+        } else if (!time2.isEmpty() && time2.equals("00")) {
+            hasZeroTime = true;
+        } else if (!time1.isEmpty() && time1.equals("00")) {
+            hasZeroTime = true;
+        }
 
-        if (!time3.isEmpty())
-            availFieldCount++;
-
-        if (!ph4.isEmpty())
-            availFieldCount++;
-
-        if (!time4.isEmpty())
-            availFieldCount++;
-
-        if (!ph5.isEmpty())
-            availFieldCount++;
-
-        if (!time5.isEmpty())
-            availFieldCount++;
-
+        if (!hasZeroTime) {
+            return 3; // Fixed time pronunciation mode
+        } else {
+            return 1; // Normal pronunciation mode
+        }
     }
 
     public String getField(int index) {
-
         return switch (index) {
             case 0 -> syllable_type;
             case 1 -> lyrics_representation;
@@ -89,8 +110,20 @@ public class SGData {
             case 17 -> ph5;
             case 18 -> time5;
             case 19 -> eox;
-            default -> throw new RuntimeException("?");
+            default -> throw new RuntimeException("Invalid field index: " + index);
         };
-
     }
+
+    // Get valid phoneme count
+    public int getValidPhonemeCount() {
+        int count = 0;
+        if (!ph1.isEmpty()) count++;
+        if (!ph2.isEmpty()) count++;
+        if (!ph3.isEmpty()) count++;
+        if (!ph4.isEmpty()) count++;
+        if (!ph5.isEmpty()) count++;
+        return count;
+    }
+
 }
+

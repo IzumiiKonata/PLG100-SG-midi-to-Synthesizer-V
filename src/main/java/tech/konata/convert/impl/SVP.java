@@ -136,16 +136,13 @@ public class SVP extends ProjectConvertor {
 
     private List<Double> generatePitchData() {
 
-        // 处理空安全和链式调用
         if (this.getPitch() == null) return null;
 
         List<Pair<Long, Double>> relativeData = PitchConverter.getRelativeData(pitch, notes);
         if (relativeData == null) return null;
 
-        // 假设 appendPitchPointsForSvpOutput 的具体实现（需补充）
         List<Pair<Long, Double>> appendedData = SynthVPitchConvertion.appendPitchPointsForSvpOutput(relativeData);
 
-        // 转换数据格式
         List<Pair<Long, Double>> mappedData = new ArrayList<>();
         for (Pair<Long, Double> pair : appendedData) {
             long scaledTick = pair.first * TICK_RATE;
@@ -153,7 +150,6 @@ public class SVP extends ProjectConvertor {
             mappedData.add(new Pair<>(scaledTick, scaledValue));
         }
 
-        // 平铺成 Double 列表
         List<Double> points = new ArrayList<>();
         for (Pair<Long, Double> p : mappedData) {
             points.add((double) p.first);

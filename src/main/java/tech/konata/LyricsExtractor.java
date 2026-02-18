@@ -39,7 +39,7 @@ public class LyricsExtractor {
         convertors.forEach(ProjectConvertor::load);
 
         // haruyoko, tokinona
-        File file = new File("D:\\MidiTest\\tokinona.MID");
+        File file = new File("D:\\MidiTest\\haruyoko.MID");
         this.parseMidi(file);
 
         convertors.forEach(c -> {
@@ -60,10 +60,12 @@ public class LyricsExtractor {
         // skip first line
         for (int i = 1; i < strings.length; i++) {
 
-            String line = strings[i];
+            String line = strings[i].trim();
+            if (line.isEmpty()) continue;
 
             String[] split = line.split(",");
 
+            // Convert single-digit hex to double-digit
             for (int j = 7; j < split.length; j++) {
 
                 if (split[j].length() == 1) {
@@ -72,8 +74,16 @@ public class LyricsExtractor {
 
             }
 
+            // Complement data
+            while (split.length < 20) {
+                split = Arrays.copyOf(split, split.length + 1);
+                split[split.length - 1] = "";
+            }
+
             table.add(new SGData(split[0], split[1], split[2], split[3], split[4], split[5], split[6], split[7], split[8], split[9], split[10], split[11], split[12], split[13], split[14], split[15], split[16], split[17], split[18], split[19]));
         }
+
+        System.out.println("SG_TABLE loaded: " + table.size() + " entries");
 
     }
 
@@ -88,15 +98,17 @@ public class LyricsExtractor {
     private void parseMidi(File midiIn) {
 
         Sequence sequence = MidiSystem.getSequence(midiIn);
-
         Track[] tracks = sequence.getTracks();
 
         double msPerTick = 0;
-
         NoteRecord[] noteRecord = new NoteRecord[128];
+
+        System.out.println("Parsing MIDI file: " + midiIn.getName());
+        System.out.println("Tracks: " + tracks.length);
 
         for (int i = 0; i < tracks.length; i++) {
             Track track = tracks[i];
+            System.out.println("Track " + i + ": " + track.size() + " events");
 
             for (int j = 0; j < track.size(); j++) {
                 MidiEvent midiEvent = track.get(j);
@@ -114,6 +126,7 @@ public class LyricsExtractor {
                         });
 
                         msPerTick = (60000 / (bpm * sequence.getResolution()));
+                        System.out.println("[Tick " + midiEvent.getTick() + "] Tempo: " + bpm + " BPM");
                     }
                 }
 
@@ -128,29 +141,44 @@ public class LyricsExtractor {
                             int velocity = sm.getData2();
 
                             if (velocity == 0) {
+                                // NOTE_OFF event
                                 System.out.println("[" + curMillis + "] NOTE_OFF: Note: " + sm.getData1() + " Velocity: " + sm.getData2());
 
                                 convertors.forEach(c -> {
                                     NoteRecord nr = noteRecord[note];
-                                    c.insertNote(nr.lyrics.lyrics_representation, nr.startTick, midiEvent.getTick(), note);
+                                    if (nr != null && nr.lyrics != null) {
+                                        String lyrics = nr.lyrics.lyrics_representation;
+                                        c.insertNote(lyrics, nr.startTick, midiEvent.getTick(), note);
+                                    }
                                 });
                             } else {
+                                // NOTE_ON event
                                 System.out.println("[" + curMillis + "] NOTE_ON: Note: " + sm.getData1() + " Velocity: " + sm.getData2());
 
+                                if (curLyrics != null) {
+                                    System.out.println("  - Lyrics: " + curLyrics.lyrics_representation + ", Mode: " + curLyrics.pronunciationMode);
+                                    if (curLyrics.hasBreathMark) {
+                                        System.out.println("  - Has breath mark");
+                                    }
+                                }
                                 noteRecord[sm.getData1()] = new NoteRecord(midiEvent.getTick(), curLyrics);
                             }
 
                         }
 
                         if (sm.getCommand() == ShortMessage.PITCH_BEND) {
-                            int lsb = sm.getData1(); // 低字节
-                            int msb = sm.getData2(); // 高字节
+                            int lsb = sm.getData1(); // Low byte
+                            int msb = sm.getData2(); // High byte
 
-                            // 计算弯音轮值
+                            // Calculate pitch bend value
                             int pitchBendValue = (msb << 7) | lsb;
+                            int relativeValue = pitchBendValue - 8192;
+                            
                             convertors.forEach(c -> {
-                                c.onPitchBend(pitchBendValue - 8192, midiEvent.getTick());
+                                c.onPitchBend(relativeValue, midiEvent.getTick());
                             });
+
+                            System.out.println("[" + curMillis + "] PITCH_BEND: " + relativeValue);
                         }
 
                     }
@@ -164,15 +192,18 @@ public class LyricsExtractor {
                     for (byte b : sysexMessage.getMessage()) {
                         sb.append(String.format("%02X ", b));
                     }
-                    System.out.println(sb);
+                    String hexString = sb.toString().substring(0, sb.length() - 1);
+                    System.out.println("[SysEx] " + hexString);
 
-                    SGData parsed = parse(sb.toString());
+                    SGData parsed = parsePhoneSeqData(hexString);
 
                     if (parsed != null) {
-                        System.out.println(parsed.input_text);
+                        System.out.println("  - Parsed: " + parsed.input_text);
+                        System.out.println("  - Mode: " + parsed.pronunciationMode + ", Breath: " + parsed.hasBreathMark);
+                        System.out.println("  - Phonemes: " + parsed.getValidPhonemeCount() + " phonemes");
                         curLyrics = parsed;
                     } else {
-                        System.out.println("[Err] Find failed");
+                        System.out.println("  - [Err] PhoneSEQ data parse failed");
                     }
 
                 }
@@ -184,10 +215,12 @@ public class LyricsExtractor {
 
     SGData curLyrics = null;
 
-    private SGData parse(String hexArr) {
-
-        // header is always F0 43 1# 5D 03 0* 00
-
+    /**
+     * PhoneSEQ data parsing
+     * Parse PLG100-SG system exclusive messages
+     */
+    private SGData parsePhoneSeqData(String hexArr) {
+        // PhoneSEQ header check
         if (!hexArr.startsWith("F0 43 1")) {
             return null;
         }
@@ -200,37 +233,49 @@ public class LyricsExtractor {
             return null;
         }
 
-        if (!hexArr.endsWith(" F7 ")) {
+        if (!hexArr.endsWith(" F7")) {
             return null;
         }
 
-        String cont = hexArr.substring(21, hexArr.length() - 4);
-        System.out.println("Content: " + cont);
+        // Extract data part
+        String cont = hexArr.substring(21, hexArr.length() - 4).trim();
+        if (cont.isEmpty()) {
+            return null;
+        }
 
+        System.out.println("  - Content: " + cont);
         String[] split = cont.split(" ");
 
+        // Check for breath information (7E)
+        boolean hasBreath = false;
+        List<String> filteredData = new ArrayList<>();
+        for (String data : split) {
+            if (data.equals("7E")) {
+                hasBreath = true;
+            } else {
+                filteredData.add(data);
+            }
+        }
+        split = filteredData.toArray(new String[0]);
+
+        // Table search
         for (int length = split.length; length > 0; length--) {
             mainLoop:
             for (SGData sgData : table) {
-
                 if (sgData.availFieldCount == length) {
-
                     for (int i = 0; i < length; i++) {
-
                         String field = sgData.getField(i + 9);
-
-                        if (field.equals("**"))
+                        if (field.equals("**")) {
                             continue;
-
-                        if (!field.equals(split[i]))
+                        }
+                        if (!field.equals(split[i])) {
                             continue mainLoop;
-
+                        }
                     }
-
+                    // Set breath information
+                    sgData.hasBreathMark = hasBreath;
                     return sgData;
-
                 }
-
             }
         }
 

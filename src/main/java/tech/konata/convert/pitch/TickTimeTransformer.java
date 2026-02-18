@@ -13,7 +13,6 @@ public class TickTimeTransformer {
     private final List<Tempo> tempos;
 
     public TickTimeTransformer(List<Tempo> tempos) {
-        // 按 tick 位置排序
         this.tempos = tempos.stream()
             .sorted(Comparator.comparingLong(a -> a.tickPosition))
             .collect(Collectors.toList());

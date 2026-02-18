@@ -249,7 +249,6 @@ public class PitchConverter {
             prevPoint = point;
         }
 
-        // 实现 Kotlin 的 minus 操作
         return list.stream()
                 .filter(p -> !toBeRemoved.contains(p))
                 .collect(Collectors.toList());
