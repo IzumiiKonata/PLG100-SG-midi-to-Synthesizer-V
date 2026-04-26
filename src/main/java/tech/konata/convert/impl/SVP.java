@@ -4,12 +4,9 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import lombok.Getter;
-import lombok.SneakyThrows;
-import tech.konata.LyricsExtractor;
 import tech.konata.convert.*;
 import tech.konata.convert.pitch.PitchConverter;
-import tech.konata.convert.pitch.SynthVPitchConvertion;
+import tech.konata.convert.pitch.SynthVPitchConversion;
 
 import java.io.FileWriter;
 import java.io.InputStream;
@@ -18,187 +15,251 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * @author IzumiiKonata
- * Date: 2025/4/12 08:26
+ * Converts MIDI data to the Synthesizer V {@code .svp} project format.
+ *
+ * <h2>SVP tick / position unit</h2>
+ * Synthesizer V uses a "blick" unit internally.  The conversion factor is
+ * {@value #BLICKS_PER_TICK} blicks per MIDI tick (at the standard 480-TPQN
+ * resolution used by this project).
+ *
+ * <h2>Pitch encoding</h2>
+ * The {@code pitchDelta} channel stores semitone offsets × 100 (cents), as a
+ * flat array of {@code [position0, value0, position1, value1, ...]} doubles.
  */
-public class SVP extends ProjectConvertor {
+public final class SVP extends ProjectConverter {
 
-    private final long TICK_RATE = 1470000L;
+    /** Blicks per MIDI tick (SVP's internal time unit). */
+    private static final long   BLICKS_PER_TICK    = 1_470_000L;
 
-    private JsonObject proj;
+    /** Cents per semitone. */
+    private static final double CENTS_PER_SEMITONE = 100.0;
 
-    Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    // Note default attribute values
+    private static final double  DEFAULT_DETUNE          = 0.0;
+    private static final double  DEFAULT_F0_OFFSET       = 0.0;
+    private static final double  DEFAULT_F0_TRANSITION   = 0.05000000074505806;
+    private static final double  DEFAULT_F0_DEPTH        = 0.0;
+    private static final double  DEFAULT_F0_VBR          = 0.0;
+    private static final double  DEFAULT_EXPRESSION      = 1.0;
+    private static final boolean DEFAULT_INSTANT_MODE    = true;
+    private static final int     DEFAULT_ACTIVE_TAKE_ID  = 0;
+    private static final boolean DEFAULT_LIKED           = false;
 
+    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+    private JsonObject project;
+    private final List<Note>               notes         = new ArrayList<>();
+    private final List<Pair<Long, Double>> pitchBendData = new ArrayList<>();
+
+    @Override
     public void load() {
-
-        InputStream is = LyricsExtractor.class.getResourceAsStream("/SynthesizerV_Project_Template.json");
-
-        proj = gson.fromJson(new InputStreamReader(is), JsonObject.class);
-
+        String resourcePath = "/SynthesizerV_Project_Template.json";
+        try (InputStream in = getClass().getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                throw new IllegalStateException(
+                        "Synthesizer V project template not found: " + resourcePath);
+            }
+            project = gson.fromJson(new InputStreamReader(in), JsonObject.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load Synthesizer V project template", e);
+        }
     }
 
+    @Override
     public void insertTempo(long tick, double bpm) {
-        JsonObject time = proj.getAsJsonObject("time");
+        validateTick(tick);
+        validateBpm(bpm);
 
-        JsonArray tempo = time.getAsJsonArray("tempo");
-
-        JsonObject obj = new JsonObject();
-        obj.addProperty("position", tick * TICK_RATE);
-        obj.addProperty("bpm", bpm);
-
-        tempo.add(obj);
-
-        time.add("tempo", tempo);
-        proj.add("time", time);
+        JsonObject time       = project.getAsJsonObject("time");
+        JsonArray  tempoArray = time.getAsJsonArray("tempo");
+        tempoArray.add(buildTempoObject(tick, bpm));
+        time.add("tempo", tempoArray);
+        project.add("time", time);
     }
 
-    List<Note> notes = new ArrayList<>();
+    @Override
+    public void insertNote(String lyric, long tickStart, long tickEnd, int midiKey) {
+        validateLyric(lyric);
+        validateTickRange(tickStart, tickEnd);
+        validateMidiKey(midiKey);
 
-    public void insertNote(String note, long tickStart, long tickEnd, int pitch) {
+        notes.add(new Note(midiKey, tickStart, tickEnd, lyric));
 
-        notes.add(new Note(pitch, tickStart, tickEnd, note));
+        JsonArray  tracks    = project.getAsJsonArray("tracks");
+        JsonObject track     = tracks.get(0).getAsJsonObject();
+        JsonObject mainGroup = track.getAsJsonObject("mainGroup");
+        JsonArray  noteArr   = mainGroup.getAsJsonArray("notes");
 
-        JsonArray tracks = proj.getAsJsonArray("tracks");
-
-        JsonObject jObj = tracks.get(0).getAsJsonObject();
-
-        JsonObject mainGroup = jObj.getAsJsonObject("mainGroup");
-        JsonArray notes = mainGroup.getAsJsonArray("notes");
-
-        JsonObject n = new JsonObject();
-
-        n.addProperty("musicalType", "singing");
-        n.addProperty("onset", tickStart * TICK_RATE);
-        n.addProperty("duration", (tickEnd - tickStart) * TICK_RATE);
-        n.addProperty("lyrics", note);
-        n.addProperty("phonemes", "");
-        n.addProperty("accent", "");
-        n.addProperty("pitch", pitch);
-        n.addProperty("detune", 0);
-        n.addProperty("instantMode", true);
-
-        JsonObject attributes = new JsonObject();
-        n.add("attributes", attributes);
-
-        JsonObject systemAttributes = new JsonObject();
-        systemAttributes.addProperty("tF0Offset", -0.0);
-        systemAttributes.addProperty("tF0Left", 0.05000000074505806);
-        systemAttributes.addProperty("tF0Right", 0.05000000074505806);
-        systemAttributes.addProperty("dF0Left", 0.0);
-        systemAttributes.addProperty("dF0Right", 0.0);
-        systemAttributes.addProperty("dF0Vbr", 0.0);
-        n.add("systemAttributes", systemAttributes);
-
-        JsonObject pitchTakes = new JsonObject();
-        pitchTakes.addProperty("activeTakeId", 0);
-
-        JsonArray takes = new JsonArray();
-
-        JsonObject obj = new JsonObject();
-
-        obj.addProperty("id", 0);
-        obj.addProperty("expr", 1.0);
-        obj.addProperty("liked", false);
-
-        takes.add(obj);
-        pitchTakes.add("takes", takes);
-
-        n.add("pitchTakes", pitchTakes);
-
-        JsonObject timbreTakes = new JsonObject();
-        timbreTakes.addProperty("activeTakeId", 0);
-        timbreTakes.addProperty("expr", 1.0);
-
-        timbreTakes.add("takes", takes);
-
-        n.add("timbreTakes", timbreTakes);
-
-        notes.add(n);
-
-        mainGroup.add("notes", notes);
-        jObj.add("mainGroup", mainGroup);
-
-        tracks = new JsonArray();
-        tracks.add(jObj);
-
-        proj.add("tracks", tracks);
-
+        noteArr.add(buildNoteObject(lyric, tickStart, tickEnd, midiKey));
+        writeTrackBack(track, mainGroup, noteArr, tracks);
     }
-
-    @Getter
-    Pitch pitch;
-    List<Pair<Long, Double>> pitchBendData = new ArrayList<>();
 
     @Override
     public void onPitchBend(int value, long tick) {
+        validatePitchBend(value);
+        // Scale 14-bit signed MIDI pitch-bend to semitones (±8192 → ±10.67 semitones
+        // with the PLG100-SG's default sensitivity of 768 units/semitone)
         pitchBendData.add(new Pair<>(tick, value / 768.0));
     }
 
-    private List<Double> generatePitchData() {
+    @Override
+    public void save(String baseName) {
+        if (baseName == null || baseName.isBlank()) {
+            throw new IllegalArgumentException("Output file base name must not be blank");
+        }
 
-        if (this.getPitch() == null) return null;
+        Pitch pitch = new Pitch(pitchBendData, /* absolute */ false);
+
+        JsonArray  tracks    = project.getAsJsonArray("tracks");
+        JsonObject track     = tracks.get(0).getAsJsonObject();
+        JsonObject mainGroup = track.getAsJsonObject("mainGroup");
+
+        writePitchDelta(mainGroup, pitch);
+        writeTrackBack(track, mainGroup, mainGroup.getAsJsonArray("notes"), tracks);
+
+        String outputPath = baseName + ".svp";
+        try (FileWriter writer = new FileWriter(outputPath)) {
+            gson.toJson(project, writer);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to write SVP file: " + outputPath, e);
+        }
+    }
+
+    private JsonObject buildTempoObject(long tick, double bpm) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("position", tick * BLICKS_PER_TICK);
+        obj.addProperty("bpm", bpm);
+        return obj;
+    }
+
+    private JsonObject buildNoteObject(String lyric, long tickStart, long tickEnd, int midiKey) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("musicalType",   "singing");
+        obj.addProperty("onset",         tickStart * BLICKS_PER_TICK);
+        obj.addProperty("duration",      (tickEnd - tickStart) * BLICKS_PER_TICK);
+        obj.addProperty("lyrics",        lyric);
+        obj.addProperty("phonemes",      "");
+        obj.addProperty("accent",        "");
+        obj.addProperty("pitch",         midiKey);
+        obj.addProperty("detune",        DEFAULT_DETUNE);
+        obj.addProperty("instantMode",   DEFAULT_INSTANT_MODE);
+        obj.add("attributes",       new JsonObject());
+        obj.add("systemAttributes", buildSystemAttributes());
+        obj.add("pitchTakes",       buildPitchTakes());
+        obj.add("timbreTakes",      buildTimbreTakes());
+        return obj;
+    }
+
+    private JsonObject buildSystemAttributes() {
+        JsonObject sa = new JsonObject();
+        sa.addProperty("tF0Offset", DEFAULT_F0_OFFSET);
+        sa.addProperty("tF0Left",   DEFAULT_F0_TRANSITION);
+        sa.addProperty("tF0Right",  DEFAULT_F0_TRANSITION);
+        sa.addProperty("dF0Left",   DEFAULT_F0_DEPTH);
+        sa.addProperty("dF0Right",  DEFAULT_F0_DEPTH);
+        sa.addProperty("dF0Vbr",    DEFAULT_F0_VBR);
+        return sa;
+    }
+
+    private JsonObject buildPitchTakes() {
+        JsonObject takes    = new JsonObject();
+        JsonArray  takeArr  = new JsonArray();
+        JsonObject takeItem = new JsonObject();
+
+        takes.addProperty("activeTakeId", DEFAULT_ACTIVE_TAKE_ID);
+        takeItem.addProperty("id",    DEFAULT_ACTIVE_TAKE_ID);
+        takeItem.addProperty("expr",  DEFAULT_EXPRESSION);
+        takeItem.addProperty("liked", DEFAULT_LIKED);
+        takeArr.add(takeItem);
+        takes.add("takes", takeArr);
+        return takes;
+    }
+
+    private JsonObject buildTimbreTakes() {
+        JsonObject takes    = new JsonObject();
+        JsonArray  takeArr  = new JsonArray();
+        JsonObject takeItem = new JsonObject();
+
+        takes.addProperty("activeTakeId", DEFAULT_ACTIVE_TAKE_ID);
+        takes.addProperty("expr",         DEFAULT_EXPRESSION);
+        takeItem.addProperty("id",    DEFAULT_ACTIVE_TAKE_ID);
+        takeItem.addProperty("expr",  DEFAULT_EXPRESSION);
+        takeItem.addProperty("liked", DEFAULT_LIKED);
+        takeArr.add(takeItem);
+        takes.add("takes", takeArr);
+        return takes;
+    }
+
+    /**
+     * Generates the pitch-delta point list and writes it into {@code mainGroup}.
+     *
+     * <p>SVP's {@code pitchDelta} channel stores data as an interleaved flat array:
+     * {@code [blick0, cents0, blick1, cents1, ...]}.
+     */
+    private void writePitchDelta(JsonObject mainGroup, Pitch pitch) {
+        JsonObject parameters = mainGroup.getAsJsonObject("parameters");
+        JsonObject pitchDelta = parameters.getAsJsonObject("pitchDelta");
+        JsonArray  points     = pitchDelta.getAsJsonArray("points");
 
         List<Pair<Long, Double>> relativeData = PitchConverter.getRelativeData(pitch, notes);
-        if (relativeData == null) return null;
-
-        List<Pair<Long, Double>> appendedData = SynthVPitchConvertion.appendPitchPointsForSvpOutput(relativeData);
-
-        List<Pair<Long, Double>> mappedData = new ArrayList<>();
-        for (Pair<Long, Double> pair : appendedData) {
-            long scaledTick = pair.first * TICK_RATE;
-            double scaledValue = pair.second * 100.0;
-            mappedData.add(new Pair<>(scaledTick, scaledValue));
+        if (relativeData != null && !relativeData.isEmpty()) {
+            List<Pair<Long, Double>> prepared = SynthVPitchConversion.prepareForSvpOutput(relativeData);
+            for (Pair<Long, Double> p : prepared) {
+                points.add((double) (p.first * BLICKS_PER_TICK));   // position in blicks
+                points.add(p.second * CENTS_PER_SEMITONE);          // value in cents
+            }
         }
-
-        List<Double> points = new ArrayList<>();
-        for (Pair<Long, Double> p : mappedData) {
-            points.add((double) p.first);
-            points.add(p.second);
-        }
-
-        return points;
-    }
-
-    @SneakyThrows
-    public void save(String name) {
-
-        JsonArray tracks = proj.getAsJsonArray("tracks");
-
-        JsonObject jObj = tracks.get(0).getAsJsonObject();
-
-        JsonObject mainGroup = jObj.getAsJsonObject("mainGroup");
-
-        JsonObject parameters = mainGroup.getAsJsonObject("parameters");
-
-        JsonObject pitchDelta = parameters.getAsJsonObject("pitchDelta");
-
-        JsonArray points = pitchDelta.getAsJsonArray("points");
-
-        this.pitch = new Pitch(this.pitchBendData, false);
-
-        List<Double> doubles = generatePitchData();
-        assert doubles != null;
-        doubles.forEach(points::add);
 
         pitchDelta.add("points", points);
-
         parameters.add("pitchDelta", pitchDelta);
-
         mainGroup.add("parameters", parameters);
-
-        jObj.add("mainGroup", mainGroup);
-
-        tracks = new JsonArray();
-        tracks.add(jObj);
-
-        proj.add("tracks", tracks);
-
-        FileWriter writer = new FileWriter(name + ".svp");
-        gson.toJson(proj, writer);
-
-        writer.flush();
-        writer.close();
     }
 
+    private void writeTrackBack(
+            JsonObject track, JsonObject mainGroup,
+            JsonArray notesArray, JsonArray tracks) {
 
+        mainGroup.add("notes", notesArray);
+        track.add("mainGroup", mainGroup);
+
+        JsonArray updatedTracks = new JsonArray();
+        updatedTracks.add(track);
+        project.add("tracks", updatedTracks);
+    }
+
+    private static void validateTick(long tick) {
+        if (tick < 0) throw new IllegalArgumentException("Tick cannot be negative: " + tick);
+    }
+
+    private static void validateBpm(double bpm) {
+        if (bpm <= 0) throw new IllegalArgumentException("BPM must be positive: " + bpm);
+    }
+
+    private static void validateLyric(String lyric) {
+        if (lyric == null || lyric.isBlank()) {
+            throw new IllegalArgumentException("Lyric must not be null or blank");
+        }
+    }
+
+    private static void validateTickRange(long tickStart, long tickEnd) {
+        if (tickStart < 0 || tickEnd < 0) {
+            throw new IllegalArgumentException("Tick values must be non-negative");
+        }
+        if (tickEnd < tickStart) {
+            throw new IllegalArgumentException(
+                    "tickEnd (" + tickEnd + ") must be > tickStart (" + tickStart + ")");
+        }
+    }
+
+    private static void validateMidiKey(int key) {
+        if (key < 0 || key > 127) {
+            throw new IllegalArgumentException("MIDI key must be in [0, 127]: " + key);
+        }
+    }
+
+    private static void validatePitchBend(int value) {
+        if (value < -8192 || value > 8191) {
+            throw new IllegalArgumentException("Pitch-bend value out of range: " + value);
+        }
+    }
 }

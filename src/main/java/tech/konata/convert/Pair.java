@@ -1,10 +1,15 @@
 package tech.konata.convert;
 
+import java.util.Objects;
+
 /**
- * @author IzumiiKonata
- * Date: 2025/5/17 10:15
- */ // Helper Pair class (需要自行实现)
-public class Pair<A, B> {
+ * An immutable ordered pair of two values.
+ *
+ * @param <A> type of the first element
+ * @param <B> type of the second element
+ */
+public final class Pair<A, B> {
+
     public final A first;
     public final B second;
 
@@ -21,5 +26,22 @@ public class Pair<A, B> {
         return second;
     }
 
-    // 需要实现equals和hashCode
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Pair)) return false;
+        Pair<?, ?> other = (Pair<?, ?>) o;
+        return Objects.equals(first, other.first)
+            && Objects.equals(second, other.second);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(first, second);
+    }
+
+    @Override
+    public String toString() {
+        return "Pair(" + first + ", " + second + ")";
+    }
 }

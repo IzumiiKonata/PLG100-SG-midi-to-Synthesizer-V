@@ -4,11 +4,9 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import lombok.Getter;
-import lombok.SneakyThrows;
-import tech.konata.LyricsExtractor;
 import tech.konata.convert.*;
 import tech.konata.convert.pitch.VocaloidPitchConverter;
+import tech.konata.convert.pitch.VocaloidPitchConverter.VocaloidPartPitchData;
 
 import java.io.*;
 import java.text.DecimalFormat;
@@ -18,275 +16,349 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * @author IzumiiKonata
- * Date: 2025/4/12 08:29
+ * Converts MIDI data to the VOCALOID 6 {@code .vpr} project format.
+ *
+ * <h2>File layout</h2>
+ * A {@code .vpr} file is a ZIP archive (DEFLATE, level 0) containing:
+ * <ul>
+ *   <li>{@code Project/sequence.json} – the main project JSON.</li>
+ *   <li>{@code Project/Audio/}        – an empty directory placeholder.</li>
+ * </ul>
+ *
+ * <h2>BPM encoding</h2>
+ * VOCALOID stores tempo as {@code round(bpm * 100)}, so 120.0 BPM → {@code 12000}.
+ *
+ * <h2>Multi-character lyrics</h2>
+ * If a lyric syllable contains more than one character it is split into
+ * individual single-character notes that evenly share the original tick range.
+ * This is a best-effort fallback; the PLG100-SG normally sends single-character
+ * or combined-phoneme syllables.
  */
-public class VPR extends ProjectConvertor {
+public final class VPR extends ProjectConverter {
 
-    private JsonObject proj;
+    private static final int    DEFAULT_VELOCITY              = 64;
+    private static final int    DEFAULT_ACCENT                = 50;
+    private static final int    DEFAULT_DECAY                 = 50;
+    private static final int    DEFAULT_BEND_DEPTH            = 0;
+    private static final int    DEFAULT_BEND_LENGTH           = 0;
+    private static final int    DEFAULT_OPENING               = 127;
+    private static final double DEFAULT_AI_EXPRESSION         = 0.5;
+    private static final int    DEFAULT_SINGING_SKILL_DURATION = 160;
+    private static final int    DEFAULT_WEIGHT_PRE_POST        = 64;
+    private static final int    DEFAULT_VIBRATO_TYPE           = 0;
+    private static final int    DEFAULT_VIBRATO_DURATION       = 320;
+    private static final int    DEFAULT_VIBRATO_POSITION       = 0;
+    private static final int    DEFAULT_VIBRATO_VALUE          = 0;
+    private static final boolean DEFAULT_IS_PROTECTED          = false;
+    private static final int    DEFAULT_LANG_ID                = 0;
+    private static final int    BPM_SCALE                      = 100;
 
-    Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    private static final String PHONEME_DEFAULT = "a";
+
+    private final Gson         gson          = new GsonBuilder().setPrettyPrinting().create();
+    private final DecimalFormat bpmFormatter = new DecimalFormat("##.##");
+
+    private JsonObject project;
+    private final List<Note>               notes         = new ArrayList<>();
+    private final List<Pair<Long, Double>> pitchBendData = new ArrayList<>();
 
     @Override
     public void load() {
-        InputStream is = LyricsExtractor.class.getResourceAsStream("/VOCALOID6_Project_Template.json");
-
-        proj = gson.fromJson(new InputStreamReader(is), JsonObject.class);
-    }
-
-    @Override
-    public void insertNote(String note, long tickStart, long tickEnd, int pitch) {
-
-        if (note.length() > 1) {
-
-            System.out.println("note.length() > 1");
-
-            long duration = tickEnd - tickStart;
-
-            char[] charArray = note.toCharArray();
-            for (int i = 0; i < charArray.length; i++) {
-                char c = charArray[i];
-
-                insertNote(String.valueOf(c), tickStart + (duration / charArray.length) * i, tickEnd - (duration / charArray.length) * (charArray.length - (i + 1)), pitch);
+        String resourcePath = "/VOCALOID6_Project_Template.json";
+        try (InputStream in = getClass().getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                throw new IllegalStateException(
+                        "VOCALOID project template not found: " + resourcePath);
             }
-
-            return;
+            project = gson.fromJson(new InputStreamReader(in), JsonObject.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load VOCALOID project template", e);
         }
-
-        notes.add(new Note(pitch, tickStart, tickEnd, note));
-
-        JsonArray tracks = proj.getAsJsonArray("tracks");
-
-        JsonObject track = tracks.get(0).getAsJsonObject();
-
-        JsonArray parts = track.getAsJsonArray("parts");
-
-        JsonObject part = parts.get(0).getAsJsonObject();
-
-        JsonArray notes = part.getAsJsonArray("notes");
-
-        JsonObject objNote = new JsonObject();
-
-        objNote.addProperty("lyric", note);
-        objNote.addProperty("phoneme", "a");
-        objNote.addProperty("langID", 0);
-        objNote.addProperty("isProtected", false);
-        objNote.addProperty("pos", tickStart);
-        objNote.addProperty("duration", tickEnd - tickStart);
-        objNote.addProperty("number", pitch);
-        objNote.addProperty("velocity", 64);
-
-        JsonObject exp = new JsonObject();
-        exp.addProperty("accent", 50);
-        exp.addProperty("decay", 50);
-        exp.addProperty("bendDepth", 0);
-        exp.addProperty("bendLength", 0);
-        exp.addProperty("opening", 127);
-        objNote.add("exp", exp);
-
-        JsonObject aiExp = new JsonObject();
-        aiExp.addProperty("pitchFine", 0.5);
-        aiExp.addProperty("pitchDriftStart", 0.5);
-        aiExp.addProperty("pitchDriftEnd", 0.5);
-        aiExp.addProperty("pitchScalingCenter", 0.5);
-        aiExp.addProperty("pitchScalingOrigin", 0.5);
-        aiExp.addProperty("pitchTransitionStart", 0.5);
-        aiExp.addProperty("pitchTransitionEnd", 0.5);
-        aiExp.addProperty("amplitudeWhole", 0.5);
-        aiExp.addProperty("amplitudeStart", 0.5);
-        aiExp.addProperty("amplitudeEnd", 0.5);
-        aiExp.addProperty("vibratoLeadingDepth", 0.5);
-        aiExp.addProperty("vibratoFollowingDepth", 0.5);
-        objNote.add("aiExp", aiExp);
-
-        JsonObject singingSkill = new JsonObject();
-        singingSkill.addProperty("duration", 160);
-
-        JsonObject weight = new JsonObject();
-        weight.addProperty("pre", 64);
-        weight.addProperty("post", 64);
-        singingSkill.add("weight", weight);
-
-        objNote.add("singingSkill", singingSkill);
-
-        JsonObject vibrato = new JsonObject();
-        vibrato.addProperty("type", 0);
-        vibrato.addProperty("duration", 320);
-
-        JsonArray depths = new JsonArray();
-        JsonObject depthsObj = new JsonObject();
-        weight.addProperty("pos", 0);
-        weight.addProperty("value", 0);
-        depths.add(depthsObj);
-        vibrato.add("depths", depths);
-
-        JsonArray rates = new JsonArray();
-        JsonObject ratesObj = new JsonObject();
-        weight.addProperty("pos", 0);
-        weight.addProperty("value", 0);
-        rates.add(ratesObj);
-        vibrato.add("rates", rates);
-
-        objNote.add("vibrato", vibrato);
-
-        notes.add(objNote);
-
-        part.add("notes", notes);
-
-        parts = new JsonArray();
-        parts.add(part);
-
-        track.add("parts", parts);
-
-        tracks = new JsonArray();
-        tracks.add(track);
-
-        proj.add("tracks", tracks);
     }
-
-    DecimalFormat df = new DecimalFormat("##.##");
 
     @Override
     public void insertTempo(long tick, double bpm) {
+        validateTick(tick);
+        validateBpm(bpm);
 
-        JsonObject masterTrack = proj.getAsJsonObject("masterTrack");
+        JsonObject masterTrack = project.getAsJsonObject("masterTrack");
+        JsonObject tempo       = masterTrack.getAsJsonObject("tempo");
+        JsonArray  events      = tempo.getAsJsonArray("events");
 
-        JsonObject tempo = masterTrack.getAsJsonObject("tempo");
+        boolean isFirstTempo = events.isEmpty();
 
-        JsonArray events = tempo.getAsJsonArray("events");
+        events.add(buildTempoEvent(tick, bpm));
 
-        boolean eventsEmpty = events.isEmpty();
-
-        JsonObject tempoEvent = new JsonObject();
-        tempoEvent.addProperty("pos", tick);
-        tempoEvent.addProperty("value", (int) (Double.parseDouble(df.format(bpm)) * 100));
-
-        events.add(tempoEvent);
-
-//        JsonObject global = tempo.getAsJsonObject("global");
-
-        if (eventsEmpty) {
-            JsonObject globalTempo = new JsonObject();
-            tempoEvent.addProperty("isEnabled", false);
-            tempoEvent.addProperty("value", (int) (Double.parseDouble(df.format(bpm)) * 100));
-            tempo.add("global", globalTempo);
+        if (isFirstTempo) {
+            // Populate the "global" field used for display purposes
+            tempo.add("global", buildGlobalTempo(bpm));
         }
 
         tempo.add("events", events);
-
         masterTrack.add("tempo", tempo);
-        proj.add("masterTrack", masterTrack);
-
+        project.add("masterTrack", masterTrack);
     }
 
-    @Getter
-    Pitch pitch;
-    List<Pair<Long, Double>> pitchBendData = new ArrayList<>();
+    /**
+     * Inserts a note. Multi-character lyrics are split into individual notes
+     * that divide the tick range equally.
+     */
+    @Override
+    public void insertNote(String lyric, long tickStart, long tickEnd, int midiKey) {
+        validateLyric(lyric);
+        validateTickRange(tickStart, tickEnd);
+        validateMidiKey(midiKey);
+
+        if (lyric.length() > 1) {
+            splitAndInsertMultiCharNote(lyric, tickStart, tickEnd, midiKey);
+            return;
+        }
+
+        notes.add(new Note(midiKey, tickStart, tickEnd, lyric));
+
+        JsonArray  tracks    = project.getAsJsonArray("tracks");
+        JsonObject track     = tracks.get(0).getAsJsonObject();
+        JsonArray  parts     = track.getAsJsonArray("parts");
+        JsonObject part      = parts.get(0).getAsJsonObject();
+        JsonArray  noteArr   = part.getAsJsonArray("notes");
+
+        noteArr.add(buildNoteObject(lyric, tickStart, tickEnd, midiKey));
+        writeTrackBack(part, parts, track, tracks);
+    }
 
     @Override
     public void onPitchBend(int value, long tick) {
+        validatePitchBend(value);
         pitchBendData.add(new Pair<>(tick, value / 768.0));
     }
 
-    List<Note> notes = new ArrayList<>();
-
     @Override
-    @SneakyThrows
-    public void save(String name) {
-
-        this.pitch = new Pitch(this.pitchBendData, false);
-
-        VocaloidPitchConverter.VocaloidPartPitchData pitchRawData = VocaloidPitchConverter.generateForVocaloid(this.pitch, this.notes);
-
-        if (pitchRawData != null) {
-            JsonArray tracks = proj.getAsJsonArray("tracks");
-
-            JsonObject track = tracks.get(0).getAsJsonObject();
-
-            JsonArray parts = track.getAsJsonArray("parts");
-
-            JsonObject part = parts.get(0).getAsJsonObject();
-
-            JsonArray controllers = part.getAsJsonArray("controllers");
-
-            if (!pitchRawData.getPbs().isEmpty()) {
-
-                JsonObject pitchBendSensObj = new JsonObject();
-
-                pitchBendSensObj.addProperty("name", "pitchBendSens");
-
-                JsonArray events = new JsonArray();
-
-                for (VocaloidPitchConverter.VocaloidPartPitchData.Event pbEvent : pitchRawData.getPbs()) {
-                    JsonObject eventObj = new JsonObject();
-
-                    eventObj.addProperty("pos", pbEvent.getPos());
-                    eventObj.addProperty("value", pbEvent.getValue());
-
-                    events.add(eventObj);
-                }
-
-                pitchBendSensObj.add("events", events);
-                controllers.add(pitchBendSensObj);
-            }
-
-            if (!pitchRawData.getPit().isEmpty()) {
-
-                JsonObject pitchBendObj = new JsonObject();
-
-                pitchBendObj.addProperty("name", "pitchBend");
-
-                JsonArray events = new JsonArray();
-
-                for (VocaloidPitchConverter.VocaloidPartPitchData.Event pbEvent : pitchRawData.getPit()) {
-                    JsonObject eventObj = new JsonObject();
-
-                    eventObj.addProperty("pos", pbEvent.getPos());
-                    eventObj.addProperty("value", pbEvent.getValue());
-
-                    events.add(eventObj);
-                }
-
-                pitchBendObj.add("events", events);
-                controllers.add(pitchBendObj);
-            }
-
-            part.add("controllers", controllers);
-
-            parts = new JsonArray();
-            parts.add(part);
-
-            track.add("parts", parts);
-
-            tracks = new JsonArray();
-            tracks.add(track);
-
-            proj.add("tracks", tracks);
+    public void save(String baseName) {
+        if (baseName == null || baseName.isBlank()) {
+            throw new IllegalArgumentException("Output file base name must not be blank");
         }
 
-        ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(name + ".vpr"));
+        Pitch pitch = new Pitch(pitchBendData, /* absolute */ false);
+        VocaloidPartPitchData pitchData = VocaloidPitchConverter.generateForVocaloid(pitch, notes);
 
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        OutputStreamWriter writer = new OutputStreamWriter(baos);
-        gson.toJson(proj, writer);
+        if (pitchData != null) {
+            writePitchControllers(pitchData);
+        }
 
-        writer.flush();
-        writer.close();
-
-        zos.setMethod(ZipOutputStream.DEFLATED);
-        zos.setLevel(0);
-
-        zos.putNextEntry(new ZipEntry("Project/sequence.json"));
-
-        zos.write(baos.toByteArray());
-        zos.closeEntry();
-
-        zos.putNextEntry(new ZipEntry("Project/Audio/"));
-        zos.closeEntry();
-
-        zos.flush();
-        zos.close();
-
+        String outputPath = baseName + ".vpr";
+        try {
+            writeVprZip(outputPath);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to write VPR file: " + outputPath, e);
+        }
     }
 
+    private void splitAndInsertMultiCharNote(
+            String lyric, long tickStart, long tickEnd, int midiKey) {
+
+        int  charCount    = lyric.length();
+        long totalDuration = tickEnd - tickStart;
+
+        for (int i = 0; i < charCount; i++) {
+            long charStart = tickStart + (totalDuration / charCount) * i;
+            long charEnd   = tickStart + (totalDuration / charCount) * (i + 1);
+            // Ensure the last character extends exactly to tickEnd
+            if (i == charCount - 1) charEnd = tickEnd;
+            insertNote(String.valueOf(lyric.charAt(i)), charStart, charEnd, midiKey);
+        }
+    }
+
+    private JsonObject buildTempoEvent(long tick, double bpm) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("pos",   tick);
+        obj.addProperty("value", scaledBpm(bpm));
+        return obj;
+    }
+
+    private JsonObject buildGlobalTempo(double bpm) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("isEnabled", false);
+        obj.addProperty("value",     scaledBpm(bpm));
+        return obj;
+    }
+
+    private int scaledBpm(double bpm) {
+        return (int) (Double.parseDouble(bpmFormatter.format(bpm)) * BPM_SCALE);
+    }
+
+    private JsonObject buildNoteObject(String lyric, long tickStart, long tickEnd, int midiKey) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("lyric",       lyric);
+        obj.addProperty("phoneme",     PHONEME_DEFAULT);
+        obj.addProperty("langID",      DEFAULT_LANG_ID);
+        obj.addProperty("isProtected", DEFAULT_IS_PROTECTED);
+        obj.addProperty("pos",         tickStart);
+        obj.addProperty("duration",    tickEnd - tickStart);
+        obj.addProperty("number",      midiKey);
+        obj.addProperty("velocity",    DEFAULT_VELOCITY);
+        obj.add("exp",          buildExpression());
+        obj.add("aiExp",        buildAiExpression());
+        obj.add("singingSkill", buildSingingSkill());
+        obj.add("vibrato",      buildVibrato());
+        return obj;
+    }
+
+    private JsonObject buildExpression() {
+        JsonObject exp = new JsonObject();
+        exp.addProperty("accent",     DEFAULT_ACCENT);
+        exp.addProperty("decay",      DEFAULT_DECAY);
+        exp.addProperty("bendDepth",  DEFAULT_BEND_DEPTH);
+        exp.addProperty("bendLength", DEFAULT_BEND_LENGTH);
+        exp.addProperty("opening",    DEFAULT_OPENING);
+        return exp;
+    }
+
+    private JsonObject buildAiExpression() {
+        JsonObject ai = new JsonObject();
+        String[] fields = {
+            "pitchFine", "pitchDriftStart", "pitchDriftEnd",
+            "pitchScalingCenter", "pitchScalingOrigin",
+            "pitchTransitionStart", "pitchTransitionEnd",
+            "amplitudeWhole", "amplitudeStart", "amplitudeEnd",
+            "vibratoLeadingDepth", "vibratoFollowingDepth"
+        };
+        for (String f : fields) {
+            ai.addProperty(f, DEFAULT_AI_EXPRESSION);
+        }
+        return ai;
+    }
+
+    private JsonObject buildSingingSkill() {
+        JsonObject skill  = new JsonObject();
+        JsonObject weight = new JsonObject();
+        weight.addProperty("pre",  DEFAULT_WEIGHT_PRE_POST);
+        weight.addProperty("post", DEFAULT_WEIGHT_PRE_POST);
+        skill.addProperty("duration", DEFAULT_SINGING_SKILL_DURATION);
+        skill.add("weight", weight);
+        return skill;
+    }
+
+    private JsonObject buildVibrato() {
+        JsonObject vibrato = new JsonObject();
+        vibrato.addProperty("type",     DEFAULT_VIBRATO_TYPE);
+        vibrato.addProperty("duration", DEFAULT_VIBRATO_DURATION);
+
+        JsonArray depths = new JsonArray();
+        JsonObject d = new JsonObject();
+        d.addProperty("pos",   DEFAULT_VIBRATO_POSITION);
+        d.addProperty("value", DEFAULT_VIBRATO_VALUE);
+        depths.add(d);
+        vibrato.add("depths", depths);
+
+        JsonArray rates = new JsonArray();
+        JsonObject r = new JsonObject();
+        r.addProperty("pos",   DEFAULT_VIBRATO_POSITION);
+        r.addProperty("value", DEFAULT_VIBRATO_VALUE);
+        rates.add(r);
+        vibrato.add("rates", rates);
+
+        return vibrato;
+    }
+
+    private void writePitchControllers(VocaloidPartPitchData pitchData) {
+        JsonArray  tracks      = project.getAsJsonArray("tracks");
+        JsonObject track       = tracks.get(0).getAsJsonObject();
+        JsonArray  parts       = track.getAsJsonArray("parts");
+        JsonObject part        = parts.get(0).getAsJsonObject();
+        JsonArray  controllers = part.getAsJsonArray("controllers");
+
+        if (!pitchData.getPbs().isEmpty()) {
+            controllers.add(buildController("pitchBendSens", pitchData.getPbs()));
+        }
+        if (!pitchData.getPit().isEmpty()) {
+            controllers.add(buildController("pitchBend", pitchData.getPit()));
+        }
+
+        part.add("controllers", controllers);
+        writeTrackBack(part, parts, track, tracks);
+    }
+
+    private JsonObject buildController(String name, List<VocaloidPartPitchData.Event> events) {
+        JsonObject ctrl      = new JsonObject();
+        JsonArray  eventsArr = new JsonArray();
+
+        ctrl.addProperty("name", name);
+        for (VocaloidPartPitchData.Event ev : events) {
+            JsonObject e = new JsonObject();
+            e.addProperty("pos",   ev.getPos());
+            e.addProperty("value", ev.getValue());
+            eventsArr.add(e);
+        }
+        ctrl.add("events", eventsArr);
+        return ctrl;
+    }
+
+    private void writeVprZip(String outputPath) throws Exception {
+        try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(outputPath))) {
+            zip.setMethod(ZipOutputStream.DEFLATED);
+            zip.setLevel(0);
+
+            // sequence.json
+            ByteArrayOutputStream jsonBuf = new ByteArrayOutputStream();
+            try (OutputStreamWriter w = new OutputStreamWriter(jsonBuf)) {
+                gson.toJson(project, w);
+            }
+            zip.putNextEntry(new ZipEntry("Project/sequence.json"));
+            zip.write(jsonBuf.toByteArray());
+            zip.closeEntry();
+
+            // Audio directory placeholder
+            zip.putNextEntry(new ZipEntry("Project/Audio/"));
+            zip.closeEntry();
+        }
+    }
+
+    private void writeTrackBack(
+            JsonObject part, JsonArray parts,
+            JsonObject track, JsonArray tracks) {
+
+        JsonArray updatedParts = new JsonArray();
+        updatedParts.add(part);
+        track.add("parts", updatedParts);
+
+        JsonArray updatedTracks = new JsonArray();
+        updatedTracks.add(track);
+        project.add("tracks", updatedTracks);
+    }
+
+    private static void validateTick(long tick) {
+        if (tick < 0) throw new IllegalArgumentException("Tick cannot be negative: " + tick);
+    }
+
+    private static void validateBpm(double bpm) {
+        if (bpm <= 0) throw new IllegalArgumentException("BPM must be positive: " + bpm);
+    }
+
+    private static void validateLyric(String lyric) {
+        if (lyric == null || lyric.isBlank()) {
+            throw new IllegalArgumentException("Lyric must not be null or blank");
+        }
+    }
+
+    private static void validateTickRange(long tickStart, long tickEnd) {
+        if (tickStart < 0 || tickEnd < 0) {
+            throw new IllegalArgumentException("Tick values must be non-negative");
+        }
+        if (tickEnd < tickStart) {
+            throw new IllegalArgumentException(
+                    "tickEnd (" + tickEnd + ") must be > tickStart (" + tickStart + ")");
+        }
+    }
+
+    private static void validateMidiKey(int key) {
+        if (key < 0 || key > 127) {
+            throw new IllegalArgumentException("MIDI key must be in [0, 127]: " + key);
+        }
+    }
+
+    private static void validatePitchBend(int value) {
+        if (value < -8192 || value > 8191) {
+            throw new IllegalArgumentException("Pitch-bend value out of range: " + value);
+        }
+    }
 }
